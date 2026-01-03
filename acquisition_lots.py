@@ -151,6 +151,62 @@ def get_btc_price_for_date(date: datetime, price_lookup: Optional[Dict] = None) 
         return 0.0
 
 
+def fetch_btc_prices_batch(dates: List[datetime]) -> Dict[datetime.date, float]:
+    """
+    Fetch BTC prices for multiple dates in a single batch API call.
+    
+    Args:
+        dates: List of dates to fetch prices for
+    
+    Returns:
+        Dictionary mapping dates to prices
+    """
+    if not dates:
+        return {}
+    
+    # Get date range
+    date_objects = [d.date() if isinstance(d, datetime) else d for d in dates]
+    min_date = min(date_objects)
+    max_date = max(date_objects)
+    
+    # Fetch all data in one call
+    global _btc_ticker
+    if _btc_ticker is None:
+        _btc_ticker = yf.Ticker("BTC-USD")
+    
+    try:
+        # Fetch all data for the date range (add buffer for weekends/holidays)
+        hist = _btc_ticker.history(start=min_date - pd.Timedelta(days=7), end=max_date + pd.Timedelta(days=1))
+        
+        prices = {}
+        for date_obj in date_objects:
+            # Try exact date match first
+            if date_obj in hist.index.date:
+                date_idx = [d.date() for d in hist.index].index(date_obj)
+                prices[date_obj] = float(hist['Close'].iloc[date_idx])
+            else:
+                # Find closest date (forward fill)
+                mask = hist.index.date <= date_obj
+                if mask.any():
+                    closest_idx = hist.index[mask][-1]
+                    prices[date_obj] = float(hist.loc[closest_idx, 'Close'])
+                else:
+                    # No data available before this date, use first available
+                    if len(hist) > 0:
+                        prices[date_obj] = float(hist['Close'].iloc[0])
+                    else:
+                        prices[date_obj] = 0.0
+        
+        # Update global cache
+        global _btc_price_cache
+        _btc_price_cache.update(prices)
+        
+        return prices
+    except Exception as e:
+        print(f"Error fetching batch BTC prices: {e}")
+        return {}
+
+
 def parse_mining_transactions(csv_path: str, price_lookup: Optional[Dict] = None) -> List[AcquisitionLot]:
     """
     Parse F2Pool Mining CSV file.
@@ -161,30 +217,52 @@ def parse_mining_transactions(csv_path: str, price_lookup: Optional[Dict] = None
     df = pd.read_csv(csv_path)
     
     lots = []
+    dates_to_fetch = []
+    date_rows = []  # Store (date, row) pairs for processing
     
+    # First pass: collect all dates
     for _, row in df.iterrows():
-        # Parse date
         try:
             date_str = str(row['Date']).strip()
             date = pd.to_datetime(date_str, errors='coerce')
             if pd.isna(date):
                 continue
+            
+            btc_amount = float(row['Amount']) if pd.notna(row['Amount']) else 0.0
+            if btc_amount <= 0:
+                continue
+            
+            dates_to_fetch.append(date)
+            date_rows.append((date, row))
         except (KeyError, ValueError):
             continue
+    
+    # Batch fetch all prices at once
+    if price_lookup is None and dates_to_fetch:
+        print(f"Fetching BTC prices for {len(dates_to_fetch)} mining transactions...")
+        batch_prices = fetch_btc_prices_batch(dates_to_fetch)
+    else:
+        batch_prices = {}
+    
+    # Second pass: create lots using fetched prices
+    for date, row in date_rows:
+        # Get BTC price
+        if price_lookup:
+            date_key = date.date()
+            btc_price = price_lookup.get(date_key, 0.0)
+        else:
+            date_key = date.date()
+            # Check batch prices first, then cache, then fetch individually
+            if date_key in batch_prices:
+                btc_price = batch_prices[date_key]
+            else:
+                btc_price = get_btc_price_for_date(date, price_lookup)
         
-        # Parse BTC amount
-        btc_amount = float(row['Amount']) if pd.notna(row['Amount']) else 0.0
-        if btc_amount <= 0:
-            continue
-        
-        # Get BTC price at mining time
-        btc_price = get_btc_price_for_date(date, price_lookup)
         if btc_price <= 0:
-            # Skip if we can't get price (will need to implement price lookup)
-            print(f"Warning: Could not get BTC price for mining date {date.date()}. Skipping.")
+            print(f"Warning: Could not get BTC price for mining date {date_key}. Skipping.")
             continue
         
-        # Cost basis = BTC price * BTC amount
+        btc_amount = float(row['Amount'])
         cost_basis = btc_price * btc_amount
         
         lot = AcquisitionLot(
