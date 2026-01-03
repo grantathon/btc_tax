@@ -69,6 +69,17 @@ def generate_form_8949_report(results: MatchingResults) -> pd.DataFrame:
             'Lot Source': match.lot_source
         })
     
+    # Create DataFrame with expected columns even if empty
+    expected_columns = [
+        'Description', 'Date Acquired', 'Date Sold', 'Proceeds (Sales Price)',
+        'Cost or Other Basis', 'Code', 'Amount of Adjustment', 'Gain or (Loss)',
+        'Holding Period', 'Sale Source', 'Lot Source'
+    ]
+    
+    if not data:
+        # Return empty DataFrame with correct columns
+        return pd.DataFrame(columns=expected_columns)
+    
     df = pd.DataFrame(data)
     
     # Sort by date sold, then by date acquired
@@ -175,33 +186,68 @@ def generate_accountant_summary(results: MatchingResults) -> str:
     return "\n".join(report)
 
 
-def export_tax_reports(results: MatchingResults, output_dir: str = "outputs"):
+def filter_results_by_year(results: MatchingResults, target_year: int) -> MatchingResults:
+    """
+    Filter matching results to only include sales from the target year.
+    
+    Args:
+        results: MatchingResults object
+        target_year: Year to filter by (e.g., 2024)
+    
+    Returns:
+        New MatchingResults object with filtered data
+    """
+    filtered_matches = [m for m in results.matched_lots if m.sale_date.year == target_year]
+    
+    # Recalculate totals
+    total_realized_gain = sum(m.gain_loss for m in filtered_matches)
+    short_term_gain = sum(m.gain_loss for m in filtered_matches if not m.is_long_term)
+    long_term_gain = sum(m.gain_loss for m in filtered_matches if m.is_long_term)
+    total_cost_basis = sum(m.cost_basis_used for m in filtered_matches)
+    total_proceeds = sum(m.sale_price_per_btc * m.lot_amount_used for m in filtered_matches)
+    
+    return MatchingResults(
+        method=results.method,
+        matched_lots=filtered_matches,
+        total_realized_gain=total_realized_gain,
+        short_term_gain=short_term_gain,
+        long_term_gain=long_term_gain,
+        total_cost_basis=total_cost_basis,
+        total_proceeds=total_proceeds
+    )
+
+
+def export_tax_reports(results: MatchingResults, output_dir: str = "outputs", target_year: int = None):
     """
     Export all tax reporting documents.
     
     Args:
         results: MatchingResults object
         output_dir: Directory to save output files
+        target_year: Optional year to include in filename (if filtering by year)
     """
     import os
     os.makedirs(output_dir, exist_ok=True)
     
+    # Create filename suffix
+    year_suffix = f"_{target_year}" if target_year else ""
+    
     # Generate Form 8949 report
     form_8949_df = generate_form_8949_report(results)
-    form_8949_path = f"{output_dir}/form_8949_{results.method.lower()}.csv"
+    form_8949_path = f"{output_dir}/form_8949_{results.method.lower()}{year_suffix}.csv"
     form_8949_df.to_csv(form_8949_path, index=False)
     print(f"Exported Form 8949 report to {form_8949_path}")
     
     # Generate summary report
     summary = generate_summary_report(results)
     summary_df = pd.DataFrame([summary])
-    summary_path = f"{output_dir}/schedule_d_summary_{results.method.lower()}.csv"
+    summary_path = f"{output_dir}/schedule_d_summary_{results.method.lower()}{year_suffix}.csv"
     summary_df.to_csv(summary_path, index=False)
     print(f"Exported Schedule D summary to {summary_path}")
     
     # Generate text summary for accountant
     accountant_report = generate_accountant_summary(results)
-    accountant_path = f"{output_dir}/accountant_summary_{results.method.lower()}.txt"
+    accountant_path = f"{output_dir}/accountant_summary_{results.method.lower()}{year_suffix}.txt"
     with open(accountant_path, 'w') as f:
         f.write(accountant_report)
     print(f"Exported accountant summary to {accountant_path}")

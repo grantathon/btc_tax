@@ -22,3 +22,9 @@ legacy:
 # Note: Once you select a method, you must use it consistently for future tax years
 cost_basis_method: "OPTIMAL"
 
+# Target tax year for reporting (optional)
+# If set, only sales from this year will be included in tax reports
+# If not set or null, all historical sales will be included
+# Example: 2024
+# target_year: null
+

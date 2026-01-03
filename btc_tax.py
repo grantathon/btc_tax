@@ -16,7 +16,7 @@ from cost_basis_matching import (
     calculate_remaining_lots,
     MatchingResults
 )
-from tax_reporting import export_tax_reports
+from tax_reporting import export_tax_reports, filter_results_by_year
 from utilities import load_config
 
 
@@ -136,7 +136,27 @@ def main():
     print("=" * 70)
     print("GENERATING TAX REPORTS")
     print("=" * 70)
-    export_tax_reports(selected_results, "outputs")
+    
+    # Check if target year is specified
+    target_year = config.get('target_year')
+    
+    if target_year and target_year != 'null' and target_year is not None:
+        try:
+            target_year = int(target_year)
+            print(f"Filtering results for tax year {target_year}...")
+            year_results = filter_results_by_year(selected_results, target_year)
+            print(f"  Found {len(year_results.matched_lots)} transactions in {target_year}")
+            print(f"  Total gain for {target_year}: ${year_results.total_realized_gain:,.2f}")
+            print()
+            export_tax_reports(year_results, "outputs", target_year=target_year)
+        except (ValueError, TypeError):
+            print(f"Warning: Invalid target_year '{target_year}' in config. Generating reports for all years.")
+            export_tax_reports(selected_results, "outputs")
+            target_year = None
+    else:
+        print("Generating reports for all historical transactions...")
+        export_tax_reports(selected_results, "outputs")
+        target_year = None
     print()
     
     # Calculate remaining lots using selected method
@@ -172,9 +192,14 @@ def main():
     print("  - outputs/method_comparison.csv")
     print("")
     print(f"Tax Reports (using {selected_method} method):")
-    print(f"  - outputs/form_8949_{selected_method.lower()}.csv")
-    print(f"  - outputs/schedule_d_summary_{selected_method.lower()}.csv")
-    print(f"  - outputs/accountant_summary_{selected_method.lower()}.txt")
+    if target_year:
+        print(f"  - outputs/form_8949_{selected_method.lower()}_{target_year}.csv")
+        print(f"  - outputs/schedule_d_summary_{selected_method.lower()}_{target_year}.csv")
+        print(f"  - outputs/accountant_summary_{selected_method.lower()}_{target_year}.txt")
+    else:
+        print(f"  - outputs/form_8949_{selected_method.lower()}.csv")
+        print(f"  - outputs/schedule_d_summary_{selected_method.lower()}.csv")
+        print(f"  - outputs/accountant_summary_{selected_method.lower()}.txt")
     print("=" * 70)
 
 
