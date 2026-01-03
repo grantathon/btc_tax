@@ -206,7 +206,12 @@ def build_acquisition_lots(
         current_balance_btc = config.get('current_balance_btc', 0.0)
     if legacy_acquisition_date is None:
         legacy_date_str = config.get('legacy', {}).get('acquisition_date', '2009-01-03')
-        legacy_acquisition_date = datetime.strptime(legacy_date_str, '%Y-%m-%d')
+        # If empty string, use default date (cost basis will still be $0)
+        if legacy_date_str and legacy_date_str.strip():
+            legacy_acquisition_date = datetime.strptime(legacy_date_str, '%Y-%m-%d')
+        else:
+            # Use default date when acquisition_date is empty (cost basis = $0)
+            legacy_acquisition_date = datetime(2009, 1, 3)
     # Parse buys
     buy_lots = parse_buy_transactions(buy_csv_path, price_lookup)
     print(f"Parsed {len(buy_lots)} buy transactions")
