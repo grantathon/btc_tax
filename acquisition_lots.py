@@ -42,47 +42,68 @@ def clean_currency(value: str) -> float:
         return 0.0
 
 
-def parse_buy_transactions(csv_path: str) -> List[AcquisitionLot]:
+def parse_buy_transactions(csv_path: str, price_lookup: Optional[Dict] = None) -> List[AcquisitionLot]:
     """
     Parse River Buys CSV file.
     
     Expected columns: Date, River Ref #, BTC Value, BTC Price, Fee (USD), USD Value
-    Cost basis = USD Value + Fee (USD)
+    Cost basis = (yfinance BTC price * BTC amount) + Fee (USD from CSV)
+    Note: Uses yfinance prices instead of CSV prices (which are estimates)
     """
     df = pd.read_csv(csv_path)
     
     lots = []
+    dates_to_fetch = []
+    date_rows = []  # Store (date, row) pairs for processing
     
+    # First pass: collect all dates
     for _, row in df.iterrows():
-        # Parse date
         try:
             date_str = str(row['Date']).strip()
-            # Handle dates like "2023-02-1" (missing leading zero in day)
-            # Try parsing with various formats
             date = pd.to_datetime(date_str, errors='coerce')
             if pd.isna(date):
                 continue  # Skip rows with invalid dates
+            
+            btc_amount = float(row['BTC Value']) if pd.notna(row['BTC Value']) else 0.0
+            if btc_amount <= 0:
+                continue  # Skip rows with no BTC
+            
+            dates_to_fetch.append(date)
+            date_rows.append((date, row))
         except (KeyError, ValueError):
             continue
-        
-        # Parse BTC amount
-        btc_amount = float(row['BTC Value']) if pd.notna(row['BTC Value']) else 0.0
-        if btc_amount <= 0:
-            continue  # Skip rows with no BTC
-        
-        # Calculate cost basis: USD Value + Fee (USD)
-        usd_value = clean_currency(row.get('USD Value', 0))
-        fee_usd = clean_currency(row.get('Fee (USD)', 0))
-        cost_basis = usd_value + fee_usd
-        
-        # Skip if we can't determine cost basis (both are missing/invalid)
-        if cost_basis <= 0:
-            # Try to calculate from BTC Price if USD Value is missing
-            btc_price = clean_currency(row.get('BTC Price', 0))
-            if btc_price > 0:
-                cost_basis = (btc_price * btc_amount) + fee_usd
+    
+    # Batch fetch all prices at once
+    if price_lookup is None and dates_to_fetch:
+        print(f"Fetching BTC prices for {len(dates_to_fetch)} buy transactions...")
+        batch_prices = fetch_btc_prices_batch(dates_to_fetch)
+    else:
+        batch_prices = {}
+    
+    # Second pass: create lots using fetched prices
+    for date, row in date_rows:
+        # Get BTC price from yfinance
+        if price_lookup:
+            date_key = date.date()
+            btc_price = price_lookup.get(date_key, 0.0)
+        else:
+            date_key = date.date()
+            # Check batch prices first, then cache, then fetch individually
+            if date_key in batch_prices:
+                btc_price = batch_prices[date_key]
             else:
-                continue  # Skip if we can't determine cost basis
+                btc_price = get_btc_price_for_date(date, price_lookup)
+        
+        if btc_price <= 0:
+            print(f"Warning: Could not get BTC price for buy date {date_key}. Skipping.")
+            continue
+        
+        # Get fee from CSV (actual fee paid)
+        fee_usd = clean_currency(row.get('Fee (USD)', 0))
+        
+        # Calculate cost basis: (yfinance price * amount) + fee
+        btc_amount = float(row['BTC Value'])
+        cost_basis = (btc_price * btc_amount) + fee_usd
         
         lot = AcquisitionLot(
             date=date,
@@ -334,7 +355,7 @@ def build_acquisition_lots(
         legacy_date_str = config.get('legacy', {}).get('acquisition_date', '2009-01-03')
         legacy_acquisition_date = datetime.strptime(legacy_date_str, '%Y-%m-%d')
     # Parse buys
-    buy_lots = parse_buy_transactions(buy_csv_path)
+    buy_lots = parse_buy_transactions(buy_csv_path, price_lookup)
     print(f"Parsed {len(buy_lots)} buy transactions")
     
     # Parse mining
