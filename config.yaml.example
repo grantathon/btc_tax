@@ -6,6 +6,8 @@
 data_files:
   buy_csv: "data/buys.csv"
   mining_csv: "data/mining.csv"
+  sell_csv: "data/sells.csv"
+  compass_payments_csv: "data/hosting_payments.csv"
 
 # Current BTC balance (as of analysis date)
 current_balance_btc: 1.0
