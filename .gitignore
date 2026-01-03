@@ -1,0 +1,5 @@
+env/
+outputs/
+data/
+btc_tax.code-workspace
+config.yaml
