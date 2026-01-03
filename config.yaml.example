@@ -17,3 +17,8 @@ legacy:
   # Date to use for legacy BTC acquisition (if any)
   acquisition_date: "2019-01-01"
 
+# Cost basis method selection
+# Options: "FIFO", "LIFO", "HIFO", or "OPTIMAL" (chooses lowest gain)
+# Note: Once you select a method, you must use it consistently for future tax years
+cost_basis_method: "OPTIMAL"
+

@@ -13,8 +13,10 @@ from cost_basis_matching import (
     match_sales_to_lots_hifo,
     compare_methods,
     export_matching_results_to_csv,
-    calculate_remaining_lots
+    calculate_remaining_lots,
+    MatchingResults
 )
+from tax_reporting import export_tax_reports
 from utilities import load_config
 
 
@@ -106,20 +108,39 @@ def main():
     print(comparison_df.to_string(index=False))
     print()
     
-    # Find optimal method (lowest total gain = lowest taxes)
-    optimal_method = comparison_df.loc[comparison_df['Total Realized Gain (USD)'].idxmin(), 'Method']
-    optimal_gain = comparison_df.loc[comparison_df['Total Realized Gain (USD)'].idxmin(), 'Total Realized Gain (USD)']
+    # Determine which method to use (from config or optimal)
+    preferred_method = config.get('cost_basis_method', 'OPTIMAL').upper()
     
-    print(f"OPTIMAL METHOD: {optimal_method}")
-    print(f"  Total Realized Gain: ${optimal_gain:,.2f}")
-    optimal_row = comparison_df[comparison_df['Method'] == optimal_method].iloc[0]
-    print(f"  Short-Term Gain: ${optimal_row['Short-Term Gain (USD)']:,.2f}")
-    print(f"  Long-Term Gain: ${optimal_row['Long-Term Gain (USD)']:,.2f}")
+    if preferred_method == 'OPTIMAL':
+        selected_method = comparison_df.loc[comparison_df['Total Realized Gain (USD)'].idxmin(), 'Method']
+        print(f"OPTIMAL METHOD (lowest gain): {selected_method}")
+    else:
+        if preferred_method not in ['FIFO', 'LIFO', 'HIFO']:
+            print(f"Warning: Invalid cost_basis_method '{preferred_method}' in config. Using OPTIMAL.")
+            selected_method = comparison_df.loc[comparison_df['Total Realized Gain (USD)'].idxmin(), 'Method']
+            preferred_method = 'OPTIMAL'
+        else:
+            selected_method = preferred_method
+            print(f"SELECTED METHOD (from config): {selected_method}")
+    
+    selected_row = comparison_df[comparison_df['Method'] == selected_method].iloc[0]
+    print(f"  Total Realized Gain: ${selected_row['Total Realized Gain (USD)']:,.2f}")
+    print(f"  Short-Term Gain: ${selected_row['Short-Term Gain (USD)']:,.2f}")
+    print(f"  Long-Term Gain: ${selected_row['Long-Term Gain (USD)']:,.2f}")
     print()
     
-    # Calculate remaining lots using optimal method
-    optimal_results = hifo_results if optimal_method == "HIFO" else (lifo_results if optimal_method == "LIFO" else fifo_results)
-    remaining_lots = calculate_remaining_lots(lots, optimal_results.matched_lots)
+    # Get the selected results
+    selected_results = hifo_results if selected_method == "HIFO" else (lifo_results if selected_method == "LIFO" else fifo_results)
+    
+    # Generate tax reports using selected method
+    print("=" * 70)
+    print("GENERATING TAX REPORTS")
+    print("=" * 70)
+    export_tax_reports(selected_results, "outputs")
+    print()
+    
+    # Calculate remaining lots using selected method
+    remaining_lots = calculate_remaining_lots(lots, selected_results.matched_lots)
     total_remaining_btc = sum(remaining for _, remaining in remaining_lots)
     
     # Recalculate legacy BTC after matching
@@ -140,13 +161,20 @@ def main():
     print()
     
     print("=" * 70)
-    print("Output files:")
+    print("OUTPUT FILES")
+    print("=" * 70)
+    print("Detailed Analysis:")
     print("  - outputs/acquisition_lots.csv")
     print("  - outputs/sales_transactions.csv")
     print("  - outputs/matching_results_fifo.csv")
     print("  - outputs/matching_results_lifo.csv")
     print("  - outputs/matching_results_hifo.csv")
     print("  - outputs/method_comparison.csv")
+    print("")
+    print(f"Tax Reports (using {selected_method} method):")
+    print(f"  - outputs/form_8949_{selected_method.lower()}.csv")
+    print(f"  - outputs/schedule_d_summary_{selected_method.lower()}.csv")
+    print(f"  - outputs/accountant_summary_{selected_method.lower()}.txt")
     print("=" * 70)
 
 
